@@ -1,4 +1,4 @@
-import type { CodeChunk, LineRange, CoverageState } from "./types.js";
+import type { CodeChunk, LineRange, Module } from "./types.js";
 
 export const ANALYSIS_SYSTEM = `You are a software architecture analyst. Analyze the provided codebase and return ONLY valid JSON with no markdown fences. The response must be parseable by JSON.parse().`;
 
@@ -11,13 +11,23 @@ export function buildAnalysisPrompt(params: {
 }): string {
   return `Analyze this codebase and return JSON matching this exact shape:
 {
-  "tools": [{ "name": "...", "description": "one-line purpose", "source": "Cargo.toml" }],
-  "architectureDecisions": [{ "id": "arch_001", "name": "...", "description": "..." }]
+  "modules": [
+    {
+      "id": "auth",
+      "name": "Authentication",
+      "description": "Handles user login and session management",
+      "files": ["src/auth/index.ts", "src/auth/session.ts"]
+    }
+  ]
 }
 
-Identify:
-- All significant libraries/frameworks found in dependency files
-- Key architecture decisions visible in the code (auth patterns, data patterns, concurrency model, API style, storage choices, etc.)
+Identify logical modules using a hybrid strategy:
+- If the codebase has clear top-level directories (e.g. src/auth/, src/api/), use them as module boundaries.
+- If files are mostly at the root or mixed, group them by logical concern inferred from filenames and content.
+- A module should contain 1 or more related files. Avoid single-file modules unless the file is large and self-contained.
+- For small flat repos a single module is acceptable if no clear logical grouping exists.
+- Only include source files in modules, not dependency/config files.
+- Use the exact relative file paths as they appear in the directory tree.
 
 Directory structure:
 ${params.directoryTree}
@@ -32,21 +42,18 @@ ${params.sampleSourceFiles}`;
 export function buildQuestionGenPrompt(params: {
   count: number;
   coveredLineRanges: string;
-  coveredTools: string;
-  coveredArchDecisions: string;
+  moduleSummary: string;
   codeChunks: string;
-  analysisJson: string;
 }): string {
   return `Generate ${params.count} multiple-choice questions about this codebase.
 Return a JSON array where each item matches this shape exactly:
 {
   "id": "q_<8-char random hex>",
-  "category": "lines_of_code" | "tool" | "architecture",
+  "category": "lines_of_code",
+  "module": "<moduleId>",
   "file": "relative/path.ts",
   "startLine": 10,
   "endLine": 25,
-  "toolName": "...",
-  "decisionId": "arch_001",
   "codeContext": "...code snippet...",
   "text": "Question text?",
   "options": ["Option A", "Option B", "Option C"],
@@ -55,23 +62,20 @@ Return a JSON array where each item matches this shape exactly:
 }
 
 Notes:
-- Include "file", "startLine", "endLine", "codeContext" only for lines_of_code questions
-- Include "toolName" only for tool questions
-- Include "decisionId" only for architecture questions
+- All questions must be of category "lines_of_code"
+- "module" must be a valid module id from the module list below
+- "file" and "module" must be consistent — the file must belong to that module
+- "codeContext" should be the relevant code snippet (max 20 lines)
 - "correctIndex" must be 0, 1, or 2
 
-Do NOT generate questions covering these already-covered areas:
-- Lines: ${params.coveredLineRanges || "none"}
-- Tools: ${params.coveredTools || "none"}
-- Architecture decisions: ${params.coveredArchDecisions || "none"}
+Do NOT generate questions covering these already-covered line ranges:
+${params.coveredLineRanges || "none"}
 
-Target distribution: 60% lines_of_code, 20% tool, 20% architecture
+Modules in this codebase:
+${params.moduleSummary}
 
-Source code chunks:
-${params.codeChunks}
-
-Tool and architecture context:
-${params.analysisJson}`;
+Source code (grouped by module):
+${params.codeChunks}`;
 }
 
 export function formatDependencyFiles(depFiles: Array<{ path: string; content: string }>): string {
@@ -88,10 +92,31 @@ export function formatSampleSourceFiles(sourceFiles: Array<{ path: string; conte
     .join("\n\n");
 }
 
-export function formatCodeChunks(chunks: CodeChunk[]): string {
-  return chunks
-    .map(c => `### ${c.file} (lines ${c.startLine}–${c.endLine})\n\`\`\`\n${c.content}\n\`\`\``)
-    .join("\n\n");
+export function formatModuleCodeChunks(chunks: CodeChunk[], modules: Module[]): string {
+  const modNameMap = new Map(modules.map(m => [m.id, m.name]));
+
+  const byModule = new Map<string, CodeChunk[]>();
+  for (const chunk of chunks) {
+    const list = byModule.get(chunk.module) ?? [];
+    list.push(chunk);
+    byModule.set(chunk.module, list);
+  }
+
+  const parts: string[] = [];
+  for (const [moduleId, moduleChunks] of byModule) {
+    const modName = modNameMap.get(moduleId) ?? moduleId;
+    parts.push(`## Module: ${modName} (${moduleId})`);
+    for (const c of moduleChunks) {
+      parts.push(`### ${c.file} (lines ${c.startLine}–${c.endLine})\n\`\`\`\n${c.content}\n\`\`\``);
+    }
+  }
+  return parts.join("\n\n");
+}
+
+export function formatModuleSummary(modules: Module[]): string {
+  return modules
+    .map(m => `- ${m.id}: ${m.name} — ${m.description} (${m.files.length} file(s))`)
+    .join("\n");
 }
 
 export function formatCoveredLineRanges(lineCoverage: Record<string, LineRange[]>): string {
@@ -102,18 +127,4 @@ export function formatCoveredLineRanges(lineCoverage: Record<string, LineRange[]
     parts.push(`${file}: [${rangeStr}]`);
   }
   return parts.join("; ") || "none";
-}
-
-export function buildPromptParams(state: CoverageState, analysis: { tools: Array<{ name: string }>; architectureDecisions: Array<{ id: string }> }) {
-  return {
-    coveredLineRanges: formatCoveredLineRanges(state.lineCoverage),
-    coveredTools: Object.entries(state.toolCoverage)
-      .filter(([, v]) => v)
-      .map(([k]) => k)
-      .join(", ") || "none",
-    coveredArchDecisions: Object.entries(state.archCoverage)
-      .filter(([, v]) => v)
-      .map(([k]) => k)
-      .join(", ") || "none",
-  };
 }

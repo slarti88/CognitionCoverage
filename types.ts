@@ -1,8 +1,5 @@
 export type QuestionCategory =
-  | { kind: "lines_of_code"; file: string; startLine: number; endLine: number }
-  | { kind: "tool"; toolName: string }
-  | { kind: "architecture"; decisionId: string }
-  | { kind: "file_class"; file: string };
+  | { kind: "lines_of_code"; file: string; startLine: number; endLine: number; module: string };
 
 export interface Question {
   id: string;
@@ -21,28 +18,20 @@ export interface LineRange {
 
 export interface CoverageState {
   lineCoverage: Record<string, LineRange[]>;
-  toolCoverage: Record<string, boolean>;
-  archCoverage: Record<string, boolean>;
   coveredFileCommits: Record<string, string>;
   questionCache: Question[];
   askedQuestionIds: string[];
 }
 
-export interface ToolEntry {
-  name: string;
-  description: string;
-  source: string;
-}
-
-export interface ArchDecision {
+export interface Module {
   id: string;
   name: string;
   description: string;
+  files: string[];
 }
 
 export interface CodebaseAnalysis {
-  tools: ToolEntry[];
-  architectureDecisions: ArchDecision[];
+  modules: Module[];
 }
 
 export interface CodeChunk {
@@ -50,6 +39,7 @@ export interface CodeChunk {
   startLine: number;
   endLine: number;
   content: string;
+  module: string;
 }
 
 export interface SourceFile {
@@ -69,14 +59,17 @@ export interface WalkResult {
   dirTree: string;
 }
 
-export interface CoverageStats {
+export interface ModuleStat {
+  moduleId: string;
+  name: string;
   linePercent: number;
-  toolPercent: number;
-  archPercent: number;
   coveredLines: number;
   totalLines: number;
-  coveredTools: number;
-  totalTools: number;
-  coveredArch: number;
-  totalArch: number;
+}
+
+export interface CoverageStats {
+  linePercent: number;
+  coveredLines: number;
+  totalLines: number;
+  moduleStats: ModuleStat[];
 }

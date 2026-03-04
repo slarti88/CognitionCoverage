@@ -42,35 +42,24 @@ class ReportComponent {
     lines.push(pad(`  ${sep}`));
     lines.push("");
 
-    const rows = [
-      {
-        label: "Line Coverage  ",
-        pct: this.stats.linePercent,
-        covered: this.stats.coveredLines,
-        total: this.stats.totalLines,
-        unit: "lines",
-      },
-      {
-        label: "Tool Coverage  ",
-        pct: this.stats.toolPercent,
-        covered: this.stats.coveredTools,
-        total: this.stats.totalTools,
-        unit: "tools",
-      },
-      {
-        label: "Architecture   ",
-        pct: this.stats.archPercent,
-        covered: this.stats.coveredArch,
-        total: this.stats.totalArch,
-        unit: "decisions",
-      },
-    ];
+    // Overall line coverage
+    const overallPct = `${Math.round(this.stats.linePercent)}%`.padStart(4);
+    const overallDetail = th.fg("dim", `(${this.stats.coveredLines}/${this.stats.totalLines} lines)`);
+    lines.push(pad(`  ${th.fg("muted", "Overall        ")}  ${th.fg("accent", progressBar(this.stats.linePercent))}  ${th.fg("text", overallPct)}  ${overallDetail}`));
 
-    for (const row of rows) {
-      const bar = th.fg("accent", progressBar(row.pct));
-      const pctStr = `${Math.round(row.pct)}%`.padStart(4);
-      const detail = th.fg("dim", `(${row.covered}/${row.total} ${row.unit})`);
-      lines.push(pad(`  ${th.fg("muted", row.label)}  ${bar}  ${th.fg("text", pctStr)}  ${detail}`));
+    // Per-module rows
+    if (this.stats.moduleStats.length > 0) {
+      lines.push("");
+      lines.push(pad(`  ${th.fg("muted", "By Module:")}`));
+      for (const mod of this.stats.moduleStats) {
+        const done = mod.linePercent >= 100;
+        const bar = th.fg(done ? "success" : "accent", progressBar(mod.linePercent));
+        const pct = `${Math.round(mod.linePercent)}%`.padStart(4);
+        const detail = th.fg("dim", `(${mod.coveredLines}/${mod.totalLines} lines)`);
+        const label = mod.name.padEnd(15).slice(0, 15);
+        const labelColor = done ? th.fg("success", label) : th.fg("muted", label);
+        lines.push(pad(`  ${labelColor}  ${bar}  ${th.fg("text", pct)}  ${detail}`));
+      }
     }
 
     if (this.invalidated.length > 0) {
@@ -82,11 +71,10 @@ class ReportComponent {
       }
     }
 
-    if (this.analysis) {
+    if (this.analysis && this.analysis.modules.length > 0) {
       lines.push("");
       lines.push(pad(`  ${sep}`));
-      lines.push(pad(`  ${th.fg("muted", "Tracked tools:")} ${th.fg("dim", this.analysis.tools.map(t => t.name).join(", ") || "none")}`));
-      lines.push(pad(`  ${th.fg("muted", "Architecture decisions:")} ${th.fg("dim", String(this.analysis.architectureDecisions.length))}`));
+      lines.push(pad(`  ${th.fg("muted", "Modules:")} ${th.fg("dim", this.analysis.modules.map(m => m.name).join(", "))}`));
     }
 
     lines.push("");

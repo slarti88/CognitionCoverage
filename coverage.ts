@@ -1,5 +1,5 @@
 import type {
-  CoverageState, CoverageStats, LineRange, Question,
+  CoverageState, CoverageStats, ModuleStat, LineRange, Question,
   CodebaseAnalysis, SourceFile,
 } from "./types.js";
 
@@ -10,7 +10,6 @@ export function mergeRanges(existing: LineRange[], newRange: LineRange): LineRan
   for (const range of all) {
     const last = merged[merged.length - 1];
     if (last && range.startLine <= last.endLine + 1) {
-      // Overlapping or adjacent — extend
       last.endLine = Math.max(last.endLine, range.endLine);
     } else {
       merged.push({ startLine: range.startLine, endLine: range.endLine });
@@ -25,33 +24,41 @@ export function calculateCoverage(
   analysis: CodebaseAnalysis,
   sourceFiles: SourceFile[]
 ): CoverageStats {
-  // Line coverage
+  const fileLineMap = new Map<string, number>();
+  for (const f of sourceFiles) {
+    fileLineMap.set(f.path, f.significantLines);
+  }
+
+  const moduleStats: ModuleStat[] = [];
+  for (const mod of analysis.modules) {
+    let coveredLines = 0;
+    let totalLines = 0;
+    for (const file of mod.files) {
+      totalLines += fileLineMap.get(file) ?? 0;
+      for (const r of state.lineCoverage[file] ?? []) {
+        coveredLines += r.endLine - r.startLine + 1;
+      }
+    }
+    moduleStats.push({
+      moduleId: mod.id,
+      name: mod.name,
+      linePercent: totalLines > 0 ? (coveredLines / totalLines) * 100 : 0,
+      coveredLines,
+      totalLines,
+    });
+  }
+
   let coveredLines = 0;
   for (const ranges of Object.values(state.lineCoverage)) {
-    for (const r of ranges) {
-      coveredLines += r.endLine - r.startLine + 1;
-    }
+    for (const r of ranges) coveredLines += r.endLine - r.startLine + 1;
   }
   const totalLines = sourceFiles.reduce((sum, f) => sum + f.significantLines, 0);
 
-  // Tool coverage
-  const coveredTools = Object.values(state.toolCoverage).filter(Boolean).length;
-  const totalTools = analysis.tools.length;
-
-  // Architecture coverage
-  const coveredArch = Object.values(state.archCoverage).filter(Boolean).length;
-  const totalArch = analysis.architectureDecisions.length;
-
   return {
     linePercent: totalLines > 0 ? (coveredLines / totalLines) * 100 : 0,
-    toolPercent: totalTools > 0 ? (coveredTools / totalTools) * 100 : 0,
-    archPercent: totalArch > 0 ? (coveredArch / totalArch) * 100 : 0,
     coveredLines,
     totalLines,
-    coveredTools,
-    totalTools,
-    coveredArch,
-    totalArch,
+    moduleStats,
   };
 }
 
@@ -61,28 +68,15 @@ export function applyCorrectAnswer(
   commitHash: string | null
 ): CoverageState {
   const cat = question.category;
-
-  if (cat.kind === "lines_of_code") {
-    const existing = state.lineCoverage[cat.file] ?? [];
-    const newLineCoverage = {
-      ...state.lineCoverage,
-      [cat.file]: mergeRanges(existing, { startLine: cat.startLine, endLine: cat.endLine }),
-    };
-    const newCommits = commitHash
-      ? { ...state.coveredFileCommits, [cat.file]: commitHash }
-      : state.coveredFileCommits;
-    return { ...state, lineCoverage: newLineCoverage, coveredFileCommits: newCommits };
-  }
-
-  if (cat.kind === "tool") {
-    return { ...state, toolCoverage: { ...state.toolCoverage, [cat.toolName]: true } };
-  }
-
-  if (cat.kind === "architecture") {
-    return { ...state, archCoverage: { ...state.archCoverage, [cat.decisionId]: true } };
-  }
-
-  return state;
+  const existing = state.lineCoverage[cat.file] ?? [];
+  const newLineCoverage = {
+    ...state.lineCoverage,
+    [cat.file]: mergeRanges(existing, { startLine: cat.startLine, endLine: cat.endLine }),
+  };
+  const newCommits = commitHash
+    ? { ...state.coveredFileCommits, [cat.file]: commitHash }
+    : state.coveredFileCommits;
+  return { ...state, lineCoverage: newLineCoverage, coveredFileCommits: newCommits };
 }
 
 export function invalidateStaleCoverage(
@@ -94,7 +88,6 @@ export function invalidateStaleCoverage(
   const newCommits = { ...state.coveredFileCommits };
 
   for (const file of changedFiles) {
-    // Normalize path separators for comparison
     const normalized = file.replace(/\\/g, "/");
     if (newLineCoverage[normalized]) {
       delete newLineCoverage[normalized];
@@ -117,7 +110,6 @@ export function pickNextQuestion(state: CoverageState): Question | null {
 }
 
 export function shouldResetQuestionCache(state: CoverageState): boolean {
-  // Reset when all questions have been asked
   const asked = new Set(state.askedQuestionIds);
   return state.questionCache.length > 0 &&
     state.questionCache.every(q => asked.has(q.id));

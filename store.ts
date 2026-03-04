@@ -17,8 +17,6 @@ export function ensureDirs(cwd: string): void {
 export function emptyState(): CoverageState {
   return {
     lineCoverage: {},
-    toolCoverage: {},
-    archCoverage: {},
     coveredFileCommits: {},
     questionCache: [],
     askedQuestionIds: [],

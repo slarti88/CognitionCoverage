@@ -1,15 +1,14 @@
 import { complete, type Model, type Api, type UserMessage } from "@mariozechner/pi-ai";
 import type { ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
 import type {
-  Question, CodebaseAnalysis, ToolEntry,
-  ArchDecision, CoverageState, WalkResult,
+  Question, CodebaseAnalysis, Module, CoverageState, WalkResult,
 } from "./types.js";
-import { buildCodeChunks } from "./codebase.js";
+import { buildModuleCodeChunks } from "./codebase.js";
 import {
   ANALYSIS_SYSTEM, QUESTION_GEN_SYSTEM,
   buildAnalysisPrompt, buildQuestionGenPrompt,
   formatDependencyFiles, formatSampleSourceFiles,
-  formatCodeChunks, buildPromptParams,
+  formatModuleCodeChunks, formatModuleSummary, formatCoveredLineRanges,
 } from "./prompts.js";
 
 interface AICallContext {
@@ -90,55 +89,35 @@ async function callAIWithRetry<T>(
 
 // --- Validators ---
 
-function normalizeToolEntry(obj: unknown): ToolEntry {
-  const t = obj as Record<string, unknown>;
+function normalizeModule(obj: unknown): Module {
+  const m = obj as Record<string, unknown>;
   return {
-    name: String(t["name"] ?? ""),
-    description: String(t["description"] ?? ""),
-    source: String(t["source"] ?? ""),
-  };
-}
-
-function normalizeArchDecision(obj: unknown): ArchDecision {
-  const a = obj as Record<string, unknown>;
-  return {
-    id: String(a["id"] ?? `arch_${Math.floor(Math.random() * 1000).toString().padStart(3, "0")}`),
-    name: String(a["name"] ?? ""),
-    description: String(a["description"] ?? ""),
+    id: String(m["id"] ?? `module_${Math.floor(Math.random() * 1000).toString().padStart(3, "0")}`),
+    name: String(m["name"] ?? ""),
+    description: String(m["description"] ?? ""),
+    files: Array.isArray(m["files"]) ? (m["files"] as unknown[]).map(f => String(f)) : [],
   };
 }
 
 function validateAnalysis(obj: unknown): CodebaseAnalysis {
   if (!obj || typeof obj !== "object") throw new Error("Response is not an object");
   const o = obj as Record<string, unknown>;
-  if (!Array.isArray(o["tools"])) throw new Error("Missing 'tools' array");
-  if (!Array.isArray(o["architectureDecisions"])) throw new Error("Missing 'architectureDecisions' array");
+  if (!Array.isArray(o["modules"])) throw new Error("Missing 'modules' array");
   return {
-    tools: (o["tools"] as unknown[]).map(normalizeToolEntry),
-    architectureDecisions: (o["architectureDecisions"] as unknown[]).map(normalizeArchDecision),
+    modules: (o["modules"] as unknown[]).map(normalizeModule),
   };
 }
 
 function normalizeQuestion(obj: unknown): Question {
   const q = obj as Record<string, unknown>;
 
-  let category: Question["category"];
-  const cat = String(q["category"] ?? "lines_of_code");
-
-  if (cat === "lines_of_code") {
-    category = {
-      kind: "lines_of_code",
-      file: String(q["file"] ?? ""),
-      startLine: Number(q["startLine"] ?? 1),
-      endLine: Number(q["endLine"] ?? 1),
-    };
-  } else if (cat === "tool") {
-    category = { kind: "tool", toolName: String(q["toolName"] ?? "") };
-  } else if (cat === "architecture") {
-    category = { kind: "architecture", decisionId: String(q["decisionId"] ?? "") };
-  } else {
-    category = { kind: "lines_of_code", file: String(q["file"] ?? ""), startLine: 1, endLine: 1 };
-  }
+  const category: Question["category"] = {
+    kind: "lines_of_code",
+    file: String(q["file"] ?? ""),
+    startLine: Number(q["startLine"] ?? 1),
+    endLine: Number(q["endLine"] ?? 1),
+    module: String(q["module"] ?? ""),
+  };
 
   const options = Array.isArray(q["options"]) ? q["options"] as string[] : ["A", "B", "C"];
   const correctIndex = [0, 1, 2].includes(Number(q["correctIndex"])) ? Number(q["correctIndex"]) : 0;
@@ -191,16 +170,13 @@ export async function generateQuestions(
 ): Promise<Question[]> {
   const callCtx = await getCallContext(ctx);
   const coveredFiles = new Set(Object.keys(state.lineCoverage));
-  const chunks = buildCodeChunks(walkResult.sourceFiles, coveredFiles);
-  const { coveredLineRanges, coveredTools, coveredArchDecisions } = buildPromptParams(state, analysis);
+  const chunks = buildModuleCodeChunks(walkResult.sourceFiles, analysis.modules, coveredFiles);
 
   const userPrompt = buildQuestionGenPrompt({
     count,
-    coveredLineRanges,
-    coveredTools,
-    coveredArchDecisions,
-    codeChunks: formatCodeChunks(chunks),
-    analysisJson: JSON.stringify(analysis, null, 2),
+    coveredLineRanges: formatCoveredLineRanges(state.lineCoverage),
+    moduleSummary: formatModuleSummary(analysis.modules),
+    codeChunks: formatModuleCodeChunks(chunks, analysis.modules),
   });
 
   return callAIWithRetry(userPrompt, QUESTION_GEN_SYSTEM, callCtx, validateQuestions);

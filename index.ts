@@ -108,7 +108,7 @@ async function runCogcov(ctx: ExtensionCommandContext): Promise<void> {
   while (true) {
     const stats = calculateCoverage(
       state,
-      analysis ?? { tools: [], architectureDecisions: [] },
+      analysis ?? { modules: [] },
       walkResult.sourceFiles
     );
 

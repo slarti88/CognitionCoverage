@@ -58,7 +58,10 @@ class MenuComponent {
     const pad = (s: string) => truncateToWidth(s, width);
 
     const pct = (n: number) => `${Math.round(n)}%`;
-    const statsLine = `Line: ${pct(this.stats.linePercent)}  Tool: ${pct(this.stats.toolPercent)}  Arch: ${pct(this.stats.archPercent)}`;
+    const completedModules = this.stats.moduleStats.filter(m => m.linePercent >= 100).length;
+    const totalModules = this.stats.moduleStats.length;
+    const moduleSuffix = totalModules > 0 ? `  Modules: ${completedModules}/${totalModules} done` : "";
+    const statsLine = `Coverage: ${pct(this.stats.linePercent)}${moduleSuffix}`;
 
     const innerWidth = Math.min(42, width - 4);
     const sep = th.fg("borderMuted", "─".repeat(innerWidth + 2));

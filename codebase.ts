@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { WalkResult, SourceFile, DepFile, CodeChunk } from "./types.js";
+import type { WalkResult, SourceFile, DepFile, CodeChunk, Module } from "./types.js";
 
 const SKIP_DIRS = new Set([
   "node_modules", "target", ".git", "dist", "build",
@@ -229,27 +229,62 @@ export function walkCodebase(cwd: string): WalkResult {
 }
 
 /**
- * Build code chunks for question generation, prioritizing uncovered areas.
+ * Build code chunks for question generation, distributing budget across modules.
+ * Each module gets a proportional share of maxChunks, prioritizing uncovered files.
  */
-export function buildCodeChunks(
+export function buildModuleCodeChunks(
   sourceFiles: SourceFile[],
+  modules: Module[],
   coveredFiles: Set<string> = new Set(),
   maxChunks = 30
 ): CodeChunk[] {
+  if (modules.length === 0) {
+    return buildFlatChunks(sourceFiles, coveredFiles, maxChunks, "default");
+  }
+
+  const chunksPerModule = Math.max(1, Math.floor(maxChunks / modules.length));
   const chunks: CodeChunk[] = [];
 
-  // Prioritize files not yet covered
-  const sorted = [...sourceFiles].sort((a, b) => {
-    const aCovered = coveredFiles.has(a.path) ? 1 : 0;
-    const bCovered = coveredFiles.has(b.path) ? 1 : 0;
-    return aCovered - bCovered;
-  });
+  for (const mod of modules) {
+    const modFiles = sourceFiles
+      .filter(f => mod.files.includes(f.path))
+      .sort((a, b) => {
+        const aCov = coveredFiles.has(a.path) ? 1 : 0;
+        const bCov = coveredFiles.has(b.path) ? 1 : 0;
+        return aCov - bCov || b.significantLines - a.significantLines;
+      });
 
-  for (const file of sorted) {
-    const fileChunks = chunkFile(file.path, file.content);
-    chunks.push(...fileChunks);
-    if (chunks.length >= maxChunks) break;
+    let modChunkCount = 0;
+    for (const file of modFiles) {
+      if (modChunkCount >= chunksPerModule) break;
+      for (const c of chunkFile(file.path, file.content)) {
+        if (modChunkCount >= chunksPerModule) break;
+        chunks.push({ ...c, module: mod.id });
+        modChunkCount++;
+      }
+    }
   }
 
   return chunks.slice(0, maxChunks);
+}
+
+function buildFlatChunks(
+  sourceFiles: SourceFile[],
+  coveredFiles: Set<string>,
+  maxChunks: number,
+  moduleId: string
+): CodeChunk[] {
+  const sorted = [...sourceFiles].sort((a, b) => {
+    const aCov = coveredFiles.has(a.path) ? 1 : 0;
+    const bCov = coveredFiles.has(b.path) ? 1 : 0;
+    return aCov - bCov || b.significantLines - a.significantLines;
+  });
+  const chunks: CodeChunk[] = [];
+  for (const file of sorted) {
+    for (const c of chunkFile(file.path, file.content)) {
+      chunks.push({ ...c, module: moduleId });
+      if (chunks.length >= maxChunks) return chunks;
+    }
+  }
+  return chunks;
 }

@@ -72,20 +72,12 @@ class QuestionComponent {
     lines.push("");
 
     // Category header
-    if (cat.kind === "lines_of_code") {
-      lines.push(pad(`  ${th.fg("muted", cat.file)}  ${th.fg("dim", `lines ${cat.startLine}–${cat.endLine}`)}`));
-      lines.push(pad(`  ${sep}`));
-      if (this.question.codeContext) {
-        for (const codeLine of this.question.codeContext.split("\n").slice(0, 20)) {
-          lines.push(pad(`  ${th.fg("dim", codeLine)}`));
-        }
-        lines.push(pad(`  ${sep}`));
+    lines.push(pad(`  ${th.fg("accent", cat.module)}  ${th.fg("muted", cat.file)}  ${th.fg("dim", `lines ${cat.startLine}–${cat.endLine}`)}`));
+    lines.push(pad(`  ${sep}`));
+    if (this.question.codeContext) {
+      for (const codeLine of this.question.codeContext.split("\n").slice(0, 20)) {
+        lines.push(pad(`  ${th.fg("dim", codeLine)}`));
       }
-    } else if (cat.kind === "tool") {
-      lines.push(pad(`  ${th.fg("accent", "Tool:")} ${th.fg("text", cat.toolName)}`));
-      lines.push(pad(`  ${sep}`));
-    } else if (cat.kind === "architecture") {
-      lines.push(pad(`  ${th.fg("accent", "Architecture:")} ${th.fg("text", cat.decisionId)}`));
       lines.push(pad(`  ${sep}`));
     }
 
